@@ -135,3 +135,6 @@ temp/
 # SLURM
 slurm-*.out
 *.slurm
+data/processed/train.json
+data/processed/test.json
+data/processed/validation.json
