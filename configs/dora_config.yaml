@@ -1,0 +1,48 @@
+# DoRA Configuration for HumanTouch
+# High-quality settings for maximum performance
+
+model:
+  name: "Qwen/Qwen3-0.6B-Base"
+  torch_dtype: "bfloat16"
+  attn_implementation: "eager"  # No Flash Attention
+  trust_remote_code: true
+
+dora:
+  rank: 128                    # High rank for quality
+  alpha: 256                   # 2x rank scaling
+  dropout: 0.1
+  use_dora: true              # Enable DoRA
+  bias: "none"
+  target_modules:
+    - "q_proj"
+    - "k_proj" 
+    - "v_proj"
+    - "o_proj"
+    - "up_proj"
+    - "down_proj"
+    - "gate_proj"
+
+training:
+  max_seq_length: 32768       # Full 32k context
+  batch_size: 1               # Small for 32k context
+  gradient_accumulation_steps: 16
+  learning_rate: 8e-5
+  num_epochs: 6
+  warmup_ratio: 0.03
+  weight_decay: 0.01
+
+memory:
+  gradient_checkpointing: true
+  deepspeed_stage: 3
+  cpu_offload: true
+  bf16: true
+
+evaluation:
+  eval_steps: 500
+  save_steps: 1000
+  logging_steps: 10
+  save_total_limit: 3
+
+wandb:
+  project: "humantouch-dora"
+  enabled: true
