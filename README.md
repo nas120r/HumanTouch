@@ -131,82 +131,192 @@ kaggle datasets download -d shanegerami/ai-vs-human-text -p data/raw/
 
 ### Step 6: Process Dataset
 
+**Basic processing:**
 ```bash
 python data_processing.py --input data/raw/AI_Human_Text.csv --output data/processed
 ```
 
+**With optional zip package creation:**
+```bash
+python data_processing.py --input data/raw/AI_Human_Text.csv --output data/processed --create_zip
+```
+
 **Expected output:**
 ```
-Loading dataset from data/raw/AI_Human_Text.csv
-Dataset shape: (500000, 3)
-Columns: ['text', 'generated', 'prompt']
-Generated distribution: 0    250000, 1    250000
-Filtering by length...
-Original samples: 500000
-After filtering: 450000
-Creating training pairs...
-AI texts: 225000
-Human texts: 225000
-Created 225000 training pairs
-Splitting and saving dataset...
-Train: 180000
-Validation: 22500
-Test: 22500
-Dataset saved to data/processed
-Files created:
-- train.json, validation.json, test.json
-- hf_dataset/ (Hugging Face format)
-
-Data processing complete!
-Processed 225000 samples
+================================================================================
+HumanTouch Data Processing
+================================================================================
+Input file: data/raw/AI_Human_Text.csv
+Output directory: data/processed
 Max sequence length: 32768
+================================================================================
+✓ Dataset loaded successfully!
+  Shape: (487235, 2)
+  Columns: ['text', 'generated']
+  Generated distribution: {0.0: 305797, 1.0: 181438}
+
+Filtering texts by length...
+  Original samples: 487,231
+  After length filtering: 487,182
+  Average text length: 2263 characters
+  Average estimated tokens: 566
+
+Balancing dataset...
+  AI texts: 181,419
+  Human texts: 305,763
+  Balanced dataset: 362,838 samples
+  Final AI texts: 181,419
+  Final human texts: 181,419
+
+Creating training pairs...
+  AI texts available: 181,419
+  Human texts available: 181,419
+  Creating 181,419 training pairs...
+Creating pairs: 100%|████████████| 181419/181419 [00:01<00:00, 109313.90it/s]
+✓ Created 181,419 training pairs
+
+Sample processed data (showing 2 examples):
+================================================================================
+Sample 1:
+AI Text: The artificial intelligence system processed...
+Human Text: Our AI tool crunched through the data...
+Full formatted text length: 5832 characters
+
+Splitting and saving dataset to data/processed...
+  Train samples: 145,135
+  Validation samples: 18,142
+  Test samples: 18,142
+  Saving JSON files...
+  Creating Hugging Face dataset...
+  ✓ Saved Hugging Face dataset to data/processed/hf_dataset
+
+✓ Dataset saved to data/processed
+Files created:
+  - train.json, validation.json, test.json
+  - hf_dataset/ (Hugging Face format)
+  - dataset_stats.json
+
+🎉 DATA PROCESSING COMPLETE!
+================================================================================
+✓ Processed 181,419 training pairs
+✓ Train: 145,135 samples
+✓ Validation: 18,142 samples
+✓ Test: 18,142 samples
+✓ Files saved to data/processed/
+✓ Max sequence length: 32768
+================================================================================
 ```
 
 ### Step 7: Train Model
 
-**Basic training command:**
+**🎯 Interactive Training Mode Selection (Recommended):**
 ```bash
 python train.py --dataset_path data/processed/hf_dataset --output_dir models/humantouch
 ```
 
-**Full training with all options:**
+This will show you 3 training options:
+```
+🎯 CHOOSE TRAINING MODE
+================================================================================
+1. Basic Training
+   - Fast training for testing (2 epochs, small dataset)
+   - Model: Qwen/Qwen2.5-0.5B
+   - DoRA Rank: 32
+   - Max Length: 2048 tokens
+   - Epochs: 2
+   - Dataset Size: 5,000 train, 500 val
+
+2. Full Training
+   - Maximum quality training (6 epochs, large dataset)
+   - Model: Qwen/Qwen3-0.6B-Base
+   - DoRA Rank: 128
+   - Max Length: 8192 tokens
+   - Epochs: 6
+   - Dataset Size: 50,000 train, 5,000 val
+
+3. Smaller Gpu Training
+   - Balanced training for smaller GPUs (4 epochs, medium dataset)
+   - Model: Qwen/Qwen2.5-0.5B
+   - DoRA Rank: 64
+   - Max Length: 4096 tokens
+   - Epochs: 4
+   - Dataset Size: 20,000 train, 2,000 val
+
+Enter your choice (1-3):
+```
+
+**🚀 Direct Mode Specification:**
 ```bash
+# Basic training (fast, for testing)
+python train.py --dataset_path data/processed/hf_dataset --output_dir models/humantouch --mode basic
+
+# Full training (maximum quality)
+python train.py --dataset_path data/processed/hf_dataset --output_dir models/humantouch --mode full
+
+# Smaller GPU training (balanced)
+python train.py --dataset_path data/processed/hf_dataset --output_dir models/humantouch --mode smaller_gpu
+```
+
+**⚙️ Advanced Options with Overrides:**
+```bash
+# Custom configuration with testing
 python train.py \
     --dataset_path data/processed/hf_dataset \
     --output_dir models/humantouch \
-    --rank 128 \
-    --alpha 256 \
-    --max_length 32768 \
-    --batch_size 1 \
-    --grad_accum 16 \
-    --learning_rate 8e-5 \
-    --epochs 6 \
-    --run_name "my-experiment"
-```
+    --mode full \
+    --epochs 8 \
+    --rank 256 \
+    --test_model \
+    --run_name "custom-experiment"
 
-**For smaller GPUs (RTX 4090, etc.):**
-```bash
+# Training with specific model
 python train.py \
     --dataset_path data/processed/hf_dataset \
     --output_dir models/humantouch \
-    --rank 64 \
-    --alpha 128 \
-    --max_length 16384 \
-    --batch_size 1 \
-    --grad_accum 32 \
-    --learning_rate 8e-5 \
-    --epochs 4
+    --mode smaller_gpu \
+    --model_name "Qwen/Qwen2.5-1.5B" \
+    --max_length 8192
 ```
 
-**Training progress:**
-- Monitor with WandB (automatic if installed)
-- Check GPU usage: `nvidia-smi`
-- Expected time: 48-120 hours depending on GPU
+**📊 Training Features:**
+- **GPU Detection**: Automatic GPU memory and capability detection
+- **Progress Monitoring**: Real-time training progress with WandB integration
+- **Memory Optimization**: Automatic DeepSpeed configuration based on mode
+- **Error Handling**: Comprehensive error recovery and debugging
+- **Model Testing**: Built-in model testing after training completion
+- **Configuration Saving**: All training settings saved for reproducibility
+
+**⏱️ Expected Training Times:**
+- **Basic Mode**: 30-60 minutes (testing/prototyping)
+- **Smaller GPU Mode**: 8-15 hours (RTX 4090, etc.)
+- **Full Mode**: 15-25 hours (A100/H100)
+
+**💡 Training Tips:**
+```bash
+# Monitor GPU usage
+nvidia-smi
+
+# Training with custom WandB project
+python train.py --dataset_path data/processed --output_dir models/humantouch --mode full --run_name "production-v1"
+
+# Disable WandB logging
+python train.py --dataset_path data/processed --output_dir models/humantouch --mode basic --no_wandb
+
+# Test model after training
+python train.py --dataset_path data/processed --output_dir models/humantouch --mode basic --test_model
+```
 
 ### Step 8: Evaluate Model
 
+**Built-in model testing (during training):**
 ```bash
-# Comprehensive evaluation
+# Test model automatically after training
+python train.py --dataset_path data/processed --output_dir models/humantouch --mode basic --test_model
+```
+
+**Comprehensive evaluation:**
+```bash
+# Full evaluation suite
 python evaluate.py \
     --model_path models/humantouch \
     --test_dataset data/processed/hf_dataset \
@@ -218,6 +328,16 @@ python evaluate.py \
     --model_path models/humantouch \
     --quick_test \
     --text "The artificial intelligence system processed the data efficiently and generated comprehensive analytical reports."
+```
+
+**Expected test output:**
+```
+============================================================
+MODEL TEST RESULTS
+============================================================
+Input: The artificial intelligence system processed the data efficiently...
+Output: Our AI tool crunched through the data pretty efficiently and came up with some detailed analysis reports.
+============================================================
 ```
 
 ### Step 9: Use for Inference
@@ -250,13 +370,16 @@ python inference.py \
 
 ```
 HumanTouch/
-├── data_processing.py      # Dataset preparation script
-├── train.py               # DoRA training script  
+├── data_processing.py      # Enhanced dataset preparation with progress tracking
+├── train.py               # Interactive DoRA training with 3 modes
 ├── evaluate.py            # Model evaluation script
 ├── inference.py           # Text humanization script
 ├── requirements.txt       # Python dependencies
 ├── configs/
 │   └── dora_config.yaml   # DoRA configuration settings
+├── colab_ready/           # Google Colab versions
+│   ├── data_processing_colab.py
+│   └── train_colab.py
 ├── data/
 │   ├── raw/              # Original Kaggle dataset
 │   ├── processed/        # Processed training data
@@ -267,37 +390,47 @@ HumanTouch/
 
 ## ⚙️ Configuration Options
 
-### Training Parameters
+### 🎯 Training Modes (Interactive)
+
+The new interactive training system provides three optimized configurations:
 
 ```bash
-# Maximum Quality (slow, best results)
-python train.py --rank 128 --alpha 256 --max_length 32768 --epochs 6
+# Interactive mode selection (recommended)
+python train.py --dataset_path data/processed --output_dir models/humantouch
 
-# Balanced (faster, good results)  
-python train.py --rank 64 --alpha 128 --max_length 16384 --epochs 4
-
-# Fast Prototype (quick testing)
-python train.py --rank 32 --alpha 64 --max_length 8192 --epochs 2
+# Direct mode selection
+python train.py --dataset_path data/processed --output_dir models/humantouch --mode [basic|full|smaller_gpu]
 ```
 
-### Memory Optimization
+**Mode Comparison:**
 
-**For 24GB GPU (RTX 4090):**
+| Mode | Model | Rank | Length | Epochs | Time | Quality |
+|------|-------|------|--------|--------|------|----------|
+| **Basic** | Qwen2.5-0.5B | 32 | 2048 | 2 | 30-60min | Testing |
+| **Smaller GPU** | Qwen2.5-0.5B | 64 | 4096 | 4 | 8-15hrs | Good |
+| **Full** | Qwen3-0.6B | 128 | 8192 | 6 | 15-25hrs | Best |
+
+### 🔧 Advanced Configuration
+
+**Custom parameter overrides:**
 ```bash
+# Override specific parameters
 python train.py \
-    --rank 64 \
+    --dataset_path data/processed \
+    --output_dir models/humantouch \
+    --mode full \
+    --rank 256 \
+    --epochs 8 \
     --max_length 16384 \
-    --batch_size 1 \
-    --grad_accum 32
-```
+    --model_name "Qwen/Qwen2.5-1.5B"
 
-**For 16GB GPU (RTX 4080):**
-```bash
+# Memory-optimized training
 python train.py \
-    --rank 32 \
-    --max_length 8192 \
-    --batch_size 1 \
-    --grad_accum 32
+    --dataset_path data/processed \
+    --output_dir models/humantouch \
+    --mode smaller_gpu \
+    --max_length 2048 \
+    --rank 32
 ```
 
 ### Inference Parameters
@@ -318,51 +451,62 @@ python inference.py --model_path models/humantouch --temperature 0.5
 
 ## 🛠️ Troubleshooting
 
-### Out of Memory Errors
+### GPU Memory Issues
 
 **Problem:** CUDA out of memory during training
 ```bash
-# Solution 1: Reduce sequence length
-python train.py --max_length 16384
+# Solution 1: Use Basic mode for testing
+python train.py --dataset_path data/processed --output_dir models/humantouch --mode basic
 
-# Solution 2: Reduce batch size (already at minimum 1)
-python train.py --grad_accum 32
+# Solution 2: Reduce parameters manually
+python train.py --dataset_path data/processed --output_dir models/humantouch --mode smaller_gpu --max_length 2048 --rank 32
 
-# Solution 3: Reduce DoRA rank
-python train.py --rank 64
-
-# Solution 4: Use smaller model
-# Edit train.py and change model_name to a smaller variant
+# Solution 3: Check GPU memory
+python -c "import torch; print(f'GPU Memory: {torch.cuda.get_device_properties(0).total_memory/1e9:.1f} GB')"
 ```
 
-### Slow Training
+### Training Issues
 
-**Problem:** Training is very slow
+**Problem:** Training fails or is very slow
 ```bash
-# Check GPU utilization
+# Check system status
 nvidia-smi
+python -c "import torch; print(f'CUDA: {torch.cuda.is_available()}, Device: {torch.cuda.get_device_name(0) if torch.cuda.is_available() else "None"}')"
 
-# Verify CUDA is being used
-python -c "import torch; print(torch.cuda.get_device_name(0))"
+# Use Basic mode for quick testing
+python train.py --dataset_path data/processed --output_dir models/test --mode basic --test_model
 
-# Check if DeepSpeed is working - look for "DeepSpeed" in logs
+# Check DeepSpeed installation
+python -c "import deepspeed; print('DeepSpeed OK')"
 ```
 
-### Poor Quality Results
+### Data Processing Issues
 
-**Problem:** Generated text quality is low
+**Problem:** Dataset processing fails
 ```bash
-# Solution 1: Increase DoRA rank
-python train.py --rank 128
+# Check input file
+head -5 data/raw/AI_Human_Text.csv
 
-# Solution 2: More training epochs
-python train.py --epochs 8
+# Process with debugging
+python data_processing.py --input data/raw/AI_Human_Text.csv --output data/processed --create_zip
 
-# Solution 3: Lower learning rate
-python train.py --learning_rate 5e-5
+# Verify output
+ls -la data/processed/
+head -2 data/processed/train.json
+```
 
-# Solution 4: Better data filtering
-# Edit data_processing.py to add quality filters
+### Quality Optimization
+
+**Problem:** Generated text quality needs improvement
+```bash
+# Use Full mode for best quality
+python train.py --dataset_path data/processed --output_dir models/humantouch --mode full
+
+# Increase training with custom parameters
+python train.py --dataset_path data/processed --output_dir models/humantouch --mode full --epochs 8 --rank 256
+
+# Test different models
+python train.py --dataset_path data/processed --output_dir models/humantouch --mode full --model_name "Qwen/Qwen2.5-1.5B"
 ```
 
 ### Installation Issues
@@ -426,33 +570,59 @@ Output: "Our AI tool crunched through the data pretty efficiently and came up wi
 - **Creative Writing**: Add human touch to AI-generated stories
 - **Business**: Natural-sounding AI communication and reports
 
-## 🔧 Advanced Configuration
+## 🔗 Advanced Features
 
-### Custom Dataset Format
+### 📁 Google Colab Support
 
-Your CSV should have these columns:
+For Google Colab users, we provide specialized scripts:
+
+```bash
+# Use the Colab-ready scripts
+colab_ready/
+├── data_processing_colab.py  # Auto-installs packages, Drive integration
+└── train_colab.py           # Memory-optimized for Colab
+```
+
+**Colab Features:**
+- 📦 **Auto-installation** of all dependencies
+- 💾 **Google Drive integration** for dataset storage
+- 🧠 **Memory optimization** for free/pro Colab
+- 📊 **Progress tracking** with download packages
+- ⚙️ **Same 3 training modes** as local version
+
+### 📈 Dataset Requirements
+
+**Input CSV Format:**
 - `text`: The text content
 - `generated`: 1 for AI text, 0 for human text
 - `prompt`: (optional) prompt used to generate text
 
-### WandB Monitoring
+**Output Structure:**
+```
+data/processed/
+├── train.json              # Training data (80%)
+├── validation.json         # Validation data (10%)
+├── test.json               # Test data (10%)
+├── dataset_stats.json      # Dataset statistics
+├── hf_dataset/             # HuggingFace format
+└── humantouch_processed_data.zip  # Complete package
+```
+
+### 📉 WandB Integration
 
 ```bash
-# Install and login to WandB
+# Setup WandB (optional)
 uv pip install wandb
 wandb login
 
-# Training will automatically log to WandB
-# View at: https://wandb.ai/your-username/humantouch-dora
-```
+# Training automatically logs to WandB
+python train.py --dataset_path data/processed --output_dir models/humantouch --mode full
 
-### Multi-GPU Training
+# Disable WandB if needed
+python train.py --dataset_path data/processed --output_dir models/humantouch --mode full --no_wandb
 
-```bash
-# For multiple GPUs
-python -m torch.distributed.launch --nproc_per_node=2 train.py \
-    --dataset_path data/processed/hf_dataset \
-    --output_dir models/humantouch-multigpu
+# Custom run names
+python train.py --dataset_path data/processed --output_dir models/humantouch --mode full --run_name "production-v1"
 ```
 
 ## 🤝 Contributing
@@ -485,4 +655,23 @@ MIT License - see LICENSE file for details.
 
 ---
 
-**Ready to start?** Follow the setup steps above and you'll be humanizing AI text in no time!
+## 🚀 Quick Start Summary
+
+```bash
+# 1. Setup environment
+git clone https://github.com/your-username/HumanTouch.git
+cd HumanTouch
+uv venv && source .venv/bin/activate  # or .venv\Scripts\activate on Windows
+uv pip install -r requirements.txt
+
+# 2. Process your dataset
+python data_processing.py --input data/raw/AI_Human_Text.csv --output data/processed
+
+# 3. Train with interactive mode selection
+python train.py --dataset_path data/processed --output_dir models/humantouch
+
+# 4. Test your model
+python train.py --dataset_path data/processed --output_dir models/humantouch --mode basic --test_model
+```
+
+**🎉 Ready to start?** The enhanced interactive system will guide you through the entire process!

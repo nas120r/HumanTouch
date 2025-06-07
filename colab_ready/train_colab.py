@@ -332,7 +332,7 @@ def create_colab_training_args(output_dir: str, config: dict, training_mode: str
         "eval_strategy": "steps",
         "eval_steps": 50 if training_mode == "basic" else 200,
         "save_strategy": "steps",
-        "save_steps": 100 if training_mode == "basic" else 500,
+        "save_steps": 100 if training_mode == "basic" else 400,  # Must be multiple of eval_steps
         "save_total_limit": 2 if training_mode == "basic" else 3,
         "load_best_model_at_end": True,
         "metric_for_best_model": "eval_loss",
@@ -583,6 +583,7 @@ def test_model(model_dir: str = "/content/humantouch_model"):
         
         # Generate
         inputs = tokenizer(prompt, return_tensors="pt", max_length=512, truncation=True)
+        inputs = inputs.to(model.device)  # Move inputs to same device as model
         
         with torch.no_grad():
             outputs = model.generate(
