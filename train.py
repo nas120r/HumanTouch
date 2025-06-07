@@ -4,11 +4,14 @@ HumanTouch Training Script
 Fine-tunes Qwen models with DoRA for text humanization.
 
 Usage:
-    # Interactive mode selection
+    # Single GPU (default)
     python train.py --dataset_path data/processed/hf_dataset --output_dir models/humantouch
     
-    # Direct mode specification
-    python train.py --dataset_path data/processed/hf_dataset --output_dir models/humantouch --mode full
+    # Multi-GPU with DeepSpeed
+    deepspeed --num_gpus=4 train.py --dataset_path data/processed/hf_dataset --output_dir models/humantouch --mode full
+    
+    # Interactive mode selection
+    python train.py --dataset_path data/processed/hf_dataset --output_dir models/humantouch
 """
 
 import os
@@ -37,24 +40,51 @@ from peft import (
 )
 from datasets import load_from_disk, Dataset, DatasetDict
 import deepspeed
+import math
 
 
 def check_gpu():
     """Check GPU availability and memory."""
     print("GPU Information:")
     if torch.cuda.is_available():
+        num_gpus = torch.cuda.device_count()
         gpu_name = torch.cuda.get_device_name(0)
         gpu_memory = torch.cuda.get_device_properties(0).total_memory / 1e9
-        print(f"✓ GPU: {gpu_name}")
-        print(f"✓ GPU Memory: {gpu_memory:.1f} GB")
+        total_memory = gpu_memory * num_gpus
+        
+        print(f"✓ GPU Count: {num_gpus}")
+        print(f"✓ GPU Model: {gpu_name}")
+        print(f"✓ GPU Memory: {gpu_memory:.1f} GB each")
+        print(f"✓ Total Memory: {total_memory:.1f} GB")
         print(f"✓ CUDA Version: {torch.version.cuda}")
-        return True, gpu_memory
+        
+        if num_gpus > 1:
+            print(f"✓ Multi-GPU Detected: {num_gpus} GPUs available")
+            print(f"  Use: deepspeed --num_gpus={num_gpus} train.py [args] for multi-GPU training")
+        
+        return True, gpu_memory, num_gpus
     else:
         print("✗ No GPU available - training will be very slow")
-        return False, 0
+        return False, 0, 0
 
 
-def get_training_config(training_mode: str):
+def detect_multi_gpu_setup():
+    """Detect if running in multi-GPU setup via DeepSpeed."""
+    # Check for DeepSpeed environment variables
+    local_rank = os.environ.get('LOCAL_RANK')
+    world_size = os.environ.get('WORLD_SIZE')
+    
+    if local_rank is not None and world_size is not None:
+        return True, int(local_rank), int(world_size)
+    
+    # Check for multiple GPUs available
+    if torch.cuda.is_available() and torch.cuda.device_count() > 1:
+        return False, 0, torch.cuda.device_count()  # Available but not initiated
+    
+    return False, 0, 1
+
+
+def get_training_config(training_mode: str, is_multi_gpu: bool = False, world_size: int = 1):
     """Get training configuration based on mode."""
     configs = {
         "basic": {
@@ -100,13 +130,35 @@ def get_training_config(training_mode: str):
             "description": "Balanced training for smaller GPUs (4 epochs, medium dataset)"
         }
     }
-    return configs[training_mode]
+    
+    config = configs[training_mode].copy()
+    
+    # Adjust configuration for multi-GPU training
+    if is_multi_gpu and world_size > 1:
+        # Scale learning rate for multi-GPU (sqrt scaling)
+        config["learning_rate"] = config["learning_rate"] * math.sqrt(world_size)
+        
+        # Adjust gradient accumulation to maintain effective batch size
+        # Effective batch size = batch_size * world_size * grad_accum
+        # Keep effective batch size constant by reducing grad_accum
+        config["grad_accum"] = max(1, config["grad_accum"] // world_size)
+        
+        # Update description
+        config["description"] += f" (Multi-GPU: {world_size} GPUs)"
+        
+        print(f"Multi-GPU adjustments for {world_size} GPUs:")
+        print(f"  Scaled learning rate: {config['learning_rate']:.2e}")
+        print(f"  Adjusted grad accumulation: {config['grad_accum']}")
+    
+    return config
 
 
-def choose_training_mode():
+def choose_training_mode(is_multi_gpu: bool = False, world_size: int = 1):
     """Let user choose training mode."""
     print("=" * 80)
     print("🎯 CHOOSE TRAINING MODE")
+    if is_multi_gpu:
+        print(f"🚀 Multi-GPU Mode: {world_size} GPUs Detected")
     print("=" * 80)
     
     modes = {
@@ -117,7 +169,7 @@ def choose_training_mode():
     
     # Display options
     for key, mode in modes.items():
-        config = get_training_config(mode)
+        config = get_training_config(mode, is_multi_gpu, world_size)
         print(f"{key}. {mode.replace('_', ' ').title()} Training")
         print(f"   - {config['description']}")
         print(f"   - Model: {config['model_name']}")
@@ -125,6 +177,9 @@ def choose_training_mode():
         print(f"   - Max Length: {config['max_length']} tokens")
         print(f"   - Epochs: {config['epochs']}")
         print(f"   - Dataset Size: {config['train_samples']:,} train, {config['val_samples']:,} val")
+        if is_multi_gpu:
+            print(f"   - Learning Rate (scaled): {config['learning_rate']:.2e}")
+            print(f"   - Grad Accumulation (adjusted): {config['grad_accum']}")
         print()
     
     while True:
@@ -132,7 +187,7 @@ def choose_training_mode():
             choice = input("Enter your choice (1-3): ").strip()
             if choice in modes:
                 selected_mode = modes[choice]
-                config = get_training_config(selected_mode)
+                config = get_training_config(selected_mode, is_multi_gpu, world_size)
                 print(f"\n✓ Selected: {selected_mode.replace('_', ' ').title()} Training")
                 print(f"✓ {config['description']}")
                 return selected_mode, config
@@ -242,8 +297,10 @@ def tokenize_dataset(dataset, tokenizer, max_length: int = 32768):
     return tokenized_dataset
 
 
-def create_deepspeed_config(output_dir: str, stage: int = 3):
-    """Create DeepSpeed configuration."""
+def create_deepspeed_config(output_dir: str, stage: int = 3, world_size: int = 1, training_mode: str = "full"):
+    """Create DeepSpeed configuration with multi-GPU optimizations."""
+    
+    # Base configuration
     ds_config = {
         "fp16": {"enabled": False},
         "bf16": {"enabled": True},
@@ -265,12 +322,42 @@ def create_deepspeed_config(output_dir: str, stage: int = 3):
         "wall_clock_breakdown": False
     }
     
+    # Multi-GPU optimizations
+    if world_size > 1:
+        print(f"Configuring DeepSpeed for {world_size} GPUs...")
+        
+        # Optimize communication for multi-GPU
+        ds_config["zero_optimization"].update({
+            "sub_group_size": min(world_size, 8),  # Optimize for up to 8 GPUs
+            "reduce_bucket_size": 5e8 if world_size >= 4 else 2e8,
+            "allgather_bucket_size": 5e8 if world_size >= 4 else 2e8,
+            "overlap_comm": True,
+            "contiguous_gradients": True,
+        })
+        
+        # Add communication optimization
+        ds_config["communication_data_type"] = "fp16"
+        ds_config["gradient_predivide_factor"] = 1.0
+        ds_config["gradient_accumulation_steps"] = "auto"
+        
+        # Adjust stages based on GPU count and training mode
+        if world_size >= 4 and training_mode == "full":
+            ds_config["zero_optimization"]["stage"] = 3
+            ds_config["zero_optimization"]["cpu_offload"] = True
+        elif world_size >= 2:
+            ds_config["zero_optimization"]["stage"] = 2
+            ds_config["zero_optimization"]["cpu_offload"] = False
+    
     # Save config
     os.makedirs(output_dir, exist_ok=True)
-    with open(f"{output_dir}/ds_config.json", "w") as f:
+    config_path = f"{output_dir}/ds_config.json"
+    with open(config_path, "w") as f:
         json.dump(ds_config, f, indent=2)
     
-    return f"{output_dir}/ds_config.json"
+    if world_size > 1:
+        print(f"✓ Multi-GPU DeepSpeed config saved: Stage {ds_config['zero_optimization']['stage']}")
+    
+    return config_path
 
 
 def create_training_args(output_dir: str, config: dict, training_mode: str, use_wandb: bool = True):
@@ -331,8 +418,9 @@ def create_training_args(output_dir: str, config: dict, training_mode: str, use_
         args["fp16"] = True
         args["bf16"] = False
     
-    # Add DeepSpeed config
-    deepspeed_config = create_deepspeed_config(output_dir, config["deepspeed_stage"])
+    # Add DeepSpeed config with multi-GPU support
+    _, _, world_size = detect_multi_gpu_setup()
+    deepspeed_config = create_deepspeed_config(output_dir, config["deepspeed_stage"], world_size, training_mode)
     args["deepspeed"] = deepspeed_config
     
     return TrainingArguments(**args)
@@ -474,6 +562,7 @@ def main():
     parser.add_argument("--no_wandb", action="store_true", help="Disable WandB logging")
     parser.add_argument("--run_name", type=str, help="WandB run name")
     parser.add_argument("--test_model", action="store_true", help="Test model after training")
+    parser.add_argument("--local_rank", type=int, default=-1, help="Local rank for distributed training (auto-set by DeepSpeed)")
     
     # Override arguments (optional)
     parser.add_argument("--model_name", type=str, help="Override model name")
@@ -488,20 +577,36 @@ def main():
     print("🤖 HumanTouch DoRA Training")
     print("=" * 80)
     
-    # Check GPU
-    has_gpu, gpu_memory = check_gpu()
+    # Check GPU and multi-GPU setup
+    has_gpu, gpu_memory, num_gpus = check_gpu()
+    is_multi_gpu, local_rank, world_size = detect_multi_gpu_setup()
+    
+    if is_multi_gpu:
+        print(f"🚀 Multi-GPU Training Detected: Rank {local_rank}/{world_size}")
+        # Only print on rank 0 to avoid duplicate outputs
+        if local_rank != 0:
+            import logging
+            logging.getLogger().setLevel(logging.WARNING)
+    
     print()
     
-    # Choose or get training mode
+    # Choose or get training mode (only on rank 0 for multi-GPU)
     if args.mode:
         training_mode = args.mode
-        config = get_training_config(training_mode)
-        print(f"🎯 Training Mode: {training_mode.replace('_', ' ').title()}")
-        print(f"📝 {config['description']}")
+        config = get_training_config(training_mode, is_multi_gpu, world_size)
+        if not is_multi_gpu or local_rank == 0:
+            print(f"🎯 Training Mode: {training_mode.replace('_', ' ').title()}")
+            print(f"📝 {config['description']}")
     else:
-        training_mode, config = choose_training_mode()
-        if not training_mode:
-            return
+        # Interactive mode only on rank 0
+        if is_multi_gpu and local_rank != 0:
+            # Non-zero ranks wait for mode selection
+            training_mode = "full"  # Default for multi-GPU
+            config = get_training_config(training_mode, is_multi_gpu, world_size)
+        else:
+            training_mode, config = choose_training_mode(is_multi_gpu, world_size)
+            if not training_mode:
+                return
     
     print()
     
@@ -517,18 +622,22 @@ def main():
     if args.epochs:
         config["epochs"] = args.epochs
     
-    # Initialize WandB
-    if not args.no_wandb:
+    # Initialize WandB (only on rank 0 for multi-GPU)
+    if not args.no_wandb and (not is_multi_gpu or local_rank == 0):
         wandb.init(
             project="humantouch-dora",
             name=args.run_name or f"{training_mode}-r{config['rank']}-{datetime.now().strftime('%Y%m%d-%H%M%S')}",
-            config={**config, "training_mode": training_mode}
+            config={**config, "training_mode": training_mode, "world_size": world_size}
         )
     
-    print(f"Starting {training_mode.replace('_', ' ').title()} Training")
-    print(f"Dataset: {args.dataset_path}")
-    print(f"Output: {args.output_dir}")
-    print("=" * 60)
+    # Print training details (only on rank 0 for multi-GPU)
+    if not is_multi_gpu or local_rank == 0:
+        print(f"Starting {training_mode.replace('_', ' ').title()} Training")
+        print(f"Dataset: {args.dataset_path}")
+        print(f"Output: {args.output_dir}")
+        if is_multi_gpu:
+            print(f"Multi-GPU: {world_size} GPUs")
+        print("=" * 60)
     
     # Clear memory
     clear_memory()
@@ -540,7 +649,8 @@ def main():
     # Load and prepare dataset
     dataset = load_and_prepare_dataset(args.dataset_path, config)
     if dataset is None:
-        print("❌ Failed to load dataset!")
+        if not is_multi_gpu or local_rank == 0:
+            print("❌ Failed to load dataset!")
         return
     
     # Tokenize dataset
@@ -570,62 +680,76 @@ def main():
         callbacks=[EarlyStoppingCallback(early_stopping_patience=3)]
     )
     
-    # Start training
-    print("🚀 Starting training...")
-    print("=" * 60)
+    # Start training (only print on rank 0 for multi-GPU)
+    if not is_multi_gpu or local_rank == 0:
+        print("🚀 Starting training...")
+        print("=" * 60)
     
     try:
         start_time = time.time()
         trainer.train()
         training_time = time.time() - start_time
         
-        print("✓ Training completed successfully!")
+        if not is_multi_gpu or local_rank == 0:
+            print("✓ Training completed successfully!")
         
-        # Save model
-        trainer.save_model()
-        tokenizer.save_pretrained(args.output_dir)
+        # Save model (only on rank 0 for multi-GPU)
+        if not is_multi_gpu or local_rank == 0:
+            trainer.save_model()
+            tokenizer.save_pretrained(args.output_dir)
         
-        # Save training configuration
-        config_save = {
-            "training_mode": training_mode,
-            "config": config,
-            "model_name": config["model_name"],
-            "training_time_hours": training_time / 3600,
-            "trained_at": datetime.now().isoformat()
-        }
+        # Save training configuration (only on rank 0 for multi-GPU)
+        if not is_multi_gpu or local_rank == 0:
+            config_save = {
+                "training_mode": training_mode,
+                "config": config,
+                "model_name": config["model_name"],
+                "training_time_hours": training_time / 3600,
+                "trained_at": datetime.now().isoformat(),
+                "multi_gpu": is_multi_gpu,
+                "world_size": world_size if is_multi_gpu else 1
+            }
+            
+            with open(f"{args.output_dir}/training_config.json", "w") as f:
+                json.dump(config_save, f, indent=2)
+            
+            # Save training history
+            if trainer.state.log_history:
+                with open(f"{args.output_dir}/training_history.json", "w") as f:
+                    json.dump(trainer.state.log_history, f, indent=2)
+            
+            print(f"✓ Model saved to {args.output_dir}")
+            print(f"✓ Training time: {training_time/3600:.1f} hours")
+            if is_multi_gpu:
+                print(f"✓ Multi-GPU training completed with {world_size} GPUs")
         
-        with open(f"{args.output_dir}/training_config.json", "w") as f:
-            json.dump(config_save, f, indent=2)
-        
-        # Save training history
-        if trainer.state.log_history:
-            with open(f"{args.output_dir}/training_history.json", "w") as f:
-                json.dump(trainer.state.log_history, f, indent=2)
-        
-        print(f"✓ Model saved to {args.output_dir}")
-        print(f"✓ Training time: {training_time/3600:.1f} hours")
-        
-        # Test model if requested
-        if args.test_model:
+        # Test model if requested (only on rank 0 for multi-GPU)
+        if args.test_model and (not is_multi_gpu or local_rank == 0):
             test_model(args.output_dir, config["model_name"])
         
-        # Final summary
-        print("\n" + "=" * 80)
-        print("🎉 TRAINING COMPLETE!")
-        print("=" * 80)
-        print(f"✓ {training_mode.replace('_', ' ').title()} training completed")
-        print(f"✓ Model: {config['model_name']}")
-        print(f"✓ DoRA Rank: {config['rank']}")
-        print(f"✓ Epochs: {config['epochs']}")
-        print(f"✓ Dataset Size: {config['train_samples']:,} samples")
-        print(f"✓ Training Time: {training_time/3600:.1f} hours")
-        print(f"✓ Model saved to: {args.output_dir}")
-        print("=" * 80)
+        # Final summary (only on rank 0 for multi-GPU)
+        if not is_multi_gpu or local_rank == 0:
+            print("\n" + "=" * 80)
+            print("🎉 TRAINING COMPLETE!")
+            print("=" * 80)
+            print(f"✓ {training_mode.replace('_', ' ').title()} training completed")
+            print(f"✓ Model: {config['model_name']}")
+            print(f"✓ DoRA Rank: {config['rank']}")
+            print(f"✓ Epochs: {config['epochs']}")
+            print(f"✓ Dataset Size: {config['train_samples']:,} samples")
+            print(f"✓ Training Time: {training_time/3600:.1f} hours")
+            if is_multi_gpu:
+                print(f"✓ Multi-GPU Setup: {world_size} GPUs")
+                effective_batch_size = config['batch_size'] * config['grad_accum'] * world_size
+                print(f"✓ Effective Batch Size: {effective_batch_size}")
+            print(f"✓ Model saved to: {args.output_dir}")
+            print("=" * 80)
         
     except Exception as e:
-        print(f"✗ Training failed: {e}")
-        import traceback
-        traceback.print_exc()
+        if not is_multi_gpu or local_rank == 0:
+            print(f"✗ Training failed: {e}")
+            import traceback
+            traceback.print_exc()
         return False
     
     # Memory cleanup

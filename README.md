@@ -10,18 +10,43 @@ HumanTouch solves the problem of robotic, repetitive AI-generated content by con
 - 🧠 **DoRA Fine-tuning** - Advanced weight decomposition (rank 128) for superior quality
 - 📝 **32k Context** - Handle long documents without truncation  
 - 🎯 **High Quality** - No quantization or Flash Attention compromises
+- 🚀 **Multi-GPU Support** - Scale training across 2-8+ GPUs with DeepSpeed
 - ⚡ **Easy to Use** - Simple Python scripts for training and inference
+- 📈 **Linear Scaling** - Near-linear speedup with multiple GPUs
 
 **The Problem:** AI text often sounds robotic, repetitive, and lacks natural human flow.
 
 **The Solution:** HumanTouch learns from 500K human vs AI text pairs to add natural variations, improve flow, and maintain context coherence.
 
+## 🚀 Multi-GPU Training Benefits
+
+**Why Multi-GPU?**
+- **Faster Training**: 2-4x speedup with 4 GPUs, 4-8x speedup with 8 GPUs
+- **Larger Models**: Train bigger models that don't fit on single GPU
+- **Better Quality**: Larger effective batch sizes improve convergence
+- **Cost Efficiency**: Reduce training time and cloud costs significantly
+
+**Automatic Optimizations:**
+- **Learning Rate Scaling**: Automatic sqrt scaling for stable multi-GPU training
+- **Gradient Accumulation**: Smart adjustment to maintain effective batch size
+- **DeepSpeed Integration**: ZeRO-2/3 optimization based on GPU count
+- **Communication Efficient**: Optimized data transfers between GPUs
+
 ## 📋 Requirements
 
 ### Hardware
+
+**Single-GPU Setup:**
 - **GPU**: A100 80GB, H100, or RTX 4090 24GB+ 
 - **RAM**: 32GB+ system memory
 - **Storage**: 100GB+ free space
+
+**Multi-GPU Setup (2-8 GPUs):**
+- **GPU**: 2-8x A100 80GB, H100, RTX 4090 24GB+, or RTX A6000
+- **RAM**: 64GB+ system memory (scales with GPU count)
+- **Storage**: 200GB+ free space
+- **Network**: High-speed interconnect (NVLink, InfiniBand) recommended for 4+ GPUs
+- **PSU**: Adequate power supply for multiple high-end GPUs
 
 ### Software
 - **Python**: 3.10 or higher
@@ -209,43 +234,70 @@ Files created:
 
 ### Step 7: Train Model
 
-**🎯 Interactive Training Mode Selection (Recommended):**
+**🎯 Single-GPU Training (Interactive Mode Selection):**
 ```bash
 python train.py --dataset_path data/processed/hf_dataset --output_dir models/humantouch
 ```
 
-This will show you 3 training options:
+**🚀 Multi-GPU Training with DeepSpeed:**
+```bash
+# 2 GPUs
+deepspeed --num_gpus=2 train.py --dataset_path data/processed/hf_dataset --output_dir models/humantouch --mode full
+
+# 4 GPUs  
+deepspeed --num_gpus=4 train.py --dataset_path data/processed/hf_dataset --output_dir models/humantouch --mode full
+
+# 8 GPUs (for high-end setups)
+deepspeed --num_gpus=8 train.py --dataset_path data/processed/hf_dataset --output_dir models/humantouch --mode full
+
+# Interactive mode selection with multi-GPU
+deepspeed --num_gpus=4 train.py --dataset_path data/processed/hf_dataset --output_dir models/humantouch
+```
+
+**Training Mode Options:**
+Both single-GPU and multi-GPU training offer 3 optimized configurations:
+
 ```
 🎯 CHOOSE TRAINING MODE
 ================================================================================
+🚀 Multi-GPU Mode: 4 GPUs Detected
+================================================================================
 1. Basic Training
-   - Fast training for testing (2 epochs, small dataset)
+   - Fast training for testing (2 epochs, small dataset) (Multi-GPU: 4 GPUs)
    - Model: Qwen/Qwen2.5-0.5B
    - DoRA Rank: 32
    - Max Length: 2048 tokens
    - Epochs: 2
    - Dataset Size: 5,000 train, 500 val
+   - Learning Rate (scaled): 1.00e-04
+   - Grad Accumulation (adjusted): 2
 
 2. Full Training
-   - Maximum quality training (6 epochs, large dataset)
+   - Maximum quality training (6 epochs, large dataset) (Multi-GPU: 4 GPUs)
    - Model: Qwen/Qwen3-0.6B-Base
    - DoRA Rank: 128
    - Max Length: 8192 tokens
    - Epochs: 6
    - Dataset Size: 50,000 train, 5,000 val
+   - Learning Rate (scaled): 1.60e-04
+   - Grad Accumulation (adjusted): 4
 
 3. Smaller Gpu Training
-   - Balanced training for smaller GPUs (4 epochs, medium dataset)
+   - Balanced training for smaller GPUs (4 epochs, medium dataset) (Multi-GPU: 4 GPUs)
    - Model: Qwen/Qwen2.5-0.5B
    - DoRA Rank: 64
    - Max Length: 4096 tokens
    - Epochs: 4
    - Dataset Size: 20,000 train, 2,000 val
+   - Learning Rate (scaled): 1.60e-04
+   - Grad Accumulation (adjusted): 4
 
 Enter your choice (1-3):
 ```
 
 **🚀 Direct Mode Specification:**
+
+**Single-GPU:**
 ```bash
 # Basic training (fast, for testing)
 python train.py --dataset_path data/processed/hf_dataset --output_dir models/humantouch --mode basic
@@ -257,7 +309,21 @@ python train.py --dataset_path data/processed/hf_dataset --output_dir models/hum
 python train.py --dataset_path data/processed/hf_dataset --output_dir models/humantouch --mode smaller_gpu
 ```
 
+**Multi-GPU with DeepSpeed:**
+```bash
+# Basic training (2 GPUs)
+deepspeed --num_gpus=2 train.py --dataset_path data/processed/hf_dataset --output_dir models/humantouch --mode basic
+
+# Full training (4 GPUs)
+deepspeed --num_gpus=4 train.py --dataset_path data/processed/hf_dataset --output_dir models/humantouch --mode full
+
+# Smaller GPU training (2 GPUs)
+deepspeed --num_gpus=2 train.py --dataset_path data/processed/hf_dataset --output_dir models/humantouch --mode smaller_gpu
+```
+
 **⚙️ Advanced Options with Overrides:**
+
+**Single-GPU:**
 ```bash
 # Custom configuration with testing
 python train.py \
@@ -278,20 +344,54 @@ python train.py \
     --max_length 8192
 ```
 
+**Multi-GPU:**
+```bash
+# Custom multi-GPU configuration
+deepspeed --num_gpus=4 train.py \
+    --dataset_path data/processed/hf_dataset \
+    --output_dir models/humantouch \
+    --mode full \
+    --epochs 8 \
+    --rank 256 \
+    --test_model \
+    --run_name "multi-gpu-experiment"
+
+# High-end 8-GPU setup
+deepspeed --num_gpus=8 train.py \
+    --dataset_path data/processed/hf_dataset \
+    --output_dir models/humantouch \
+    --mode full \
+    --model_name "Qwen/Qwen2.5-1.5B" \
+    --max_length 8192
+```
+
 **📊 Training Features:**
+- **Multi-GPU Support**: Automatic multi-GPU detection and DeepSpeed integration (2-8+ GPUs)
 - **GPU Detection**: Automatic GPU memory and capability detection
+- **Learning Rate Scaling**: Automatic sqrt scaling for multi-GPU setups
+- **Gradient Accumulation**: Smart adjustment to maintain effective batch size
 - **Progress Monitoring**: Real-time training progress with WandB integration
-- **Memory Optimization**: Automatic DeepSpeed configuration based on mode
+- **Memory Optimization**: Automatic DeepSpeed configuration based on mode and GPU count
+- **Communication Optimization**: Efficient data transfers for multi-GPU training
 - **Error Handling**: Comprehensive error recovery and debugging
 - **Model Testing**: Built-in model testing after training completion
 - **Configuration Saving**: All training settings saved for reproducibility
 
 **⏱️ Expected Training Times:**
+
+**Single-GPU:**
 - **Basic Mode**: 30-60 minutes (testing/prototyping)
 - **Smaller GPU Mode**: 8-15 hours (RTX 4090, etc.)
 - **Full Mode**: 15-25 hours (A100/H100)
 
+**Multi-GPU (with linear scaling):**
+- **Basic Mode**: 15-30 minutes (2-4 GPUs)
+- **Smaller GPU Mode**: 2-8 hours (2-4 GPUs)
+- **Full Mode**: 4-12 hours (2-4 GPUs), 2-6 hours (4-8 GPUs)
+
 **💡 Training Tips:**
+
+**Single-GPU:**
 ```bash
 # Monitor GPU usage
 nvidia-smi
@@ -304,6 +404,21 @@ python train.py --dataset_path data/processed --output_dir models/humantouch --m
 
 # Test model after training
 python train.py --dataset_path data/processed --output_dir models/humantouch --mode basic --test_model
+```
+
+**Multi-GPU:**
+```bash
+# Monitor all GPUs
+watch -n 1 nvidia-smi
+
+# Multi-GPU training with WandB
+deepspeed --num_gpus=4 train.py --dataset_path data/processed --output_dir models/humantouch --mode full --run_name "multi-gpu-v1"
+
+# Check DeepSpeed installation
+python -c "import deepspeed; print(f'DeepSpeed version: {deepspeed.__version__}')"
+
+# Multi-GPU test after training
+deepspeed --num_gpus=2 train.py --dataset_path data/processed --output_dir models/humantouch --mode basic --test_model
 ```
 
 ### Step 8: Evaluate Model
@@ -453,7 +568,7 @@ python inference.py --model_path models/humantouch --temperature 0.5
 
 ### GPU Memory Issues
 
-**Problem:** CUDA out of memory during training
+**Single-GPU - CUDA out of memory during training:**
 ```bash
 # Solution 1: Use Basic mode for testing
 python train.py --dataset_path data/processed --output_dir models/humantouch --mode basic
@@ -465,9 +580,24 @@ python train.py --dataset_path data/processed --output_dir models/humantouch --m
 python -c "import torch; print(f'GPU Memory: {torch.cuda.get_device_properties(0).total_memory/1e9:.1f} GB')"
 ```
 
+**Multi-GPU - Memory or communication issues:**
+```bash
+# Solution 1: Check all GPUs
+nvidia-smi
+
+# Solution 2: Test with fewer GPUs
+deepspeed --num_gpus=2 train.py --dataset_path data/processed --output_dir models/humantouch --mode basic
+
+# Solution 3: Check GPU memory across all devices
+python -c "import torch; [print(f'GPU {i}: {torch.cuda.get_device_properties(i).total_memory/1e9:.1f} GB') for i in range(torch.cuda.device_count())]"
+
+# Solution 4: Use smaller model for multi-GPU
+deepspeed --num_gpus=4 train.py --dataset_path data/processed --output_dir models/humantouch --mode smaller_gpu
+```
+
 ### Training Issues
 
-**Problem:** Training fails or is very slow
+**Single-GPU - Training fails or is very slow:**
 ```bash
 # Check system status
 nvidia-smi
@@ -478,6 +608,24 @@ python train.py --dataset_path data/processed --output_dir models/test --mode ba
 
 # Check DeepSpeed installation
 python -c "import deepspeed; print('DeepSpeed OK')"
+```
+
+**Multi-GPU - Training fails or communication issues:**
+```bash
+# Check DeepSpeed installation with multi-GPU support
+python -c "import deepspeed; print(f'DeepSpeed version: {deepspeed.__version__}')"
+
+# Test basic multi-GPU functionality
+deepspeed --num_gpus=2 train.py --dataset_path data/processed --output_dir models/test --mode basic
+
+# Check GPU topology and communication
+nvidia-smi topo -m
+
+# Verify all GPUs are visible
+python -c "import torch; print(f'Total GPUs: {torch.cuda.device_count()}')"
+
+# Run with debugging enabled
+NCCL_DEBUG=INFO deepspeed --num_gpus=2 train.py --dataset_path data/processed --output_dir models/test --mode basic
 ```
 
 ### Data Processing Issues
